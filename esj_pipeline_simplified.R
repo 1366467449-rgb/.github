@@ -29,12 +29,46 @@ FIG_DIR   <- "pub_figs"
 walk(list(OUT_DIR, FIG_DIR), dir.create, showWarnings = FALSE, recursive = TRUE)
 
 read_try <- function(p){
-  stopifnot(file.exists(p))
+  if (!file.exists(p)) stop("未找到数据文件：", p)
   tryCatch(
     read_csv(p, locale = locale(encoding = "UTF-8"), show_col_types = FALSE),
     error = function(e) read_csv(p, locale = locale(encoding = "GB18030"), show_col_types = FALSE)
   )
 }
+
+# --- 若用户数据不存在，生成一个可运行的示例数据集 ---
+if (!file.exists(DATA_PATH)) {
+  message("[INFO] 未找到原始数据，正在生成示例数据 demo_esj_data.csv 以便完整演示……")
+  set.seed(2024)
+  n_demo <- 60
+  demo_dat <- tibble(
+    Kp1              = sample(0:20, n_demo, replace = TRUE),
+    Kp2              = pmax(0, pmin(24, Kp1 + sample(-2:2, n_demo, replace = TRUE))),
+    Fusion1          = sample(c(0L,1L), n_demo, replace = TRUE),
+    Fusion2          = sample(c(0L,1L), n_demo, replace = TRUE),
+    `pre-JOA`        = round(rnorm(n_demo, 12, 2), 1),
+    JOA_1y           = round(rnorm(n_demo, 25, 3), 1),
+    `pre-ODI`        = round(rnorm(n_demo, 40, 8), 1),
+    ODI_1y           = round(rnorm(n_demo, 18, 7), 1),
+    `Back pain VAS`  = round(runif(n_demo, 2, 8), 1),
+    `Leg pain VAS`   = round(runif(n_demo, 2, 8), 1),
+    Gender           = sample(c("Male", "Female"), n_demo, replace = TRUE),
+    Age              = round(rnorm(n_demo, 58, 8), 1),
+    BMI              = round(rnorm(n_demo, 24, 3), 1),
+    HP               = sample(c(0L,1L), n_demo, replace = TRUE),
+    HT               = sample(c(0L,1L), n_demo, replace = TRUE),
+    Diabetes         = sample(c(0L,1L), n_demo, replace = TRUE),
+    AHUS             = sample(c(0L,1L), n_demo, replace = TRUE),
+    Mac              = sample(1:4, n_demo, replace = TRUE),
+    MF               = sample(c(0L,1L), n_demo, replace = TRUE),
+    Duration         = round(rnorm(n_demo, 3.5, 0.6), 2),
+    `Blood loss`     = round(rlnorm(n_demo, log(150), 0.5)),
+    `Tobacco use`    = sample(c(0L,1L), n_demo, replace = TRUE)
+  )
+  DATA_PATH <- file.path(OUT_DIR, "demo_esj_data.csv")
+  write_csv(demo_dat, DATA_PATH)
+}
+
 raw <- read_try(DATA_PATH)
 cn  <- names(raw)
 
@@ -454,6 +488,18 @@ suppressPackageStartupMessages({
 
 # df_long: 每行 = 患者 × 时间点 × 部位的评分
 # 需要至少包含：id, target, time, region, score, improve
+if (!exists("df_long")) {
+  message("[INFO] 未检测到 df_long，对 DBS 图形使用示例数据……")
+  set.seed(2025)
+  pts  <- paste0("P", sprintf("%02d", 1:20))
+  times <- c("Preoperative", "First follow-up", "Last follow-up")
+  regions <- c("Total", "Eye", "Mouth", "Speech & swallowing", "Neck")
+  df_long <- expand_grid(id = pts, time = times, region = regions) %>%
+    mutate(target = sample(c("GPi-DBS", "STN-DBS"), n(), replace = TRUE),
+           score  = pmax(0, rnorm(n(), 15, 4) - as.numeric(factor(time))*2 + rnorm(n(), 0, 1.5)),
+           improve= pmax(0, pmin(1, runif(n(), 0.1, 0.6) + as.numeric(factor(time))*0.1 - 0.1)))
+}
+
 df_long <- df_long %>%
   mutate(
     time   = factor(time,
@@ -589,7 +635,7 @@ p1_C <- df_improve %>%
 fig2 <- p1_A + p1_B + p1_C +
   plot_layout(widths = c(1.2, 1.2, 1))
 
-ggsave("Fig2_DBStime.png", fig2,
+ggsave(file.path(FIG_DIR, "Fig2_DBStime.png"), fig2,
        width = 12, height = 4, dpi = 600)
 
 # ---------------------------------------------------------
@@ -650,6 +696,14 @@ p2_B <- df_total_score %>%
   )
 
 # Panel C：严重不良事件堆叠柱状图
+if (!exists("adverse_df")) {
+  message("[INFO] 未检测到 adverse_df，使用示例不良事件数据……")
+  adverse_df <- tibble(
+    target  = rep(c("GPi-DBS", "STN-DBS"), each = 20),
+    serious = sample(c("No", "Yes"), 40, replace = TRUE, prob = c(0.8, 0.2))
+  )
+}
+
 adverse_df <- adverse_df %>%
   mutate(
     target  = factor(target, levels = c("GPi-DBS", "STN-DBS")),
@@ -686,7 +740,7 @@ p2_C <- adverse_sum %>%
 fig3 <- p2_A + p2_B + p2_C +
   plot_layout(widths = c(1.1, 1.1, 1))
 
-ggsave("Fig3_TargetCompare.png", fig3,
+ggsave(file.path(FIG_DIR, "Fig3_TargetCompare.png"), fig3,
        width = 12, height = 4, dpi = 600)
 
 # ---------------------------------------------------------
@@ -696,6 +750,21 @@ ggsave("Fig3_TargetCompare.png", fig3,
 # subgroup_df: 需要包含下列列名
 #   subgroup, n_label, gpi_mean_sd, stn_mean_sd,
 #   beta, lower, upper, p, p_interaction
+
+if (!exists("subgroup_df")) {
+  message("[INFO] 未检测到 subgroup_df，使用示例亚组数据……")
+  subgroup_df <- tibble(
+    subgroup        = c("Male", "Female", "Age <60", "Age ≥60", "HT", "No HT"),
+    n_label         = c("30 (50%)", "30 (50%)", "28 (47%)", "32 (53%)", "26 (43%)", "34 (57%)"),
+    gpi_mean_sd     = c("20.1 ± 6.3", "19.4 ± 5.9", "18.9 ± 6.1", "20.5 ± 6.4", "21.0 ± 6.0", "19.1 ± 6.2"),
+    stn_mean_sd     = c("18.0 ± 5.9", "18.7 ± 6.2", "17.5 ± 5.5", "19.2 ± 6.0", "18.9 ± 5.8", "17.8 ± 5.9"),
+    beta            = c(-2.1, -0.7, -1.2, -0.9, -1.8, -0.5),
+    lower           = beta - runif(length(beta), 0.5, 1.2),
+    upper           = beta + runif(length(beta), 0.5, 1.2),
+    p               = runif(length(beta), 0.02, 0.2),
+    p_interaction   = runif(length(beta), 0.2, 0.9)
+  )
+}
 
 subgroup_df <- subgroup_df %>%
   mutate(subgroup = as.character(subgroup))
@@ -720,7 +789,7 @@ mean_vals  <- c(NA, subgroup_df$beta)
 lower_vals <- c(NA, subgroup_df$lower)
 upper_vals <- c(NA, subgroup_df$upper)
 
-png("Fig4_SubgroupForest.png",
+png(file.path(FIG_DIR, "Fig4_SubgroupForest.png"),
     width = 2200, height = 2600, res = 300)
 
 forestplot(
