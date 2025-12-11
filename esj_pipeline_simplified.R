@@ -433,3 +433,321 @@ summ_expo(fit_joa_full, expo_var)
 cat(sprintf("\n[Range] ODI_1y: %s ~ %s ; JOA_1y: %s ~ %s\n",
             signif(range(d0$ODI_1y, na.rm=TRUE)),
             signif(range(d0$JOA_1y, na.rm=TRUE))))
+
+# =========================================================
+# DBS Figures – Full R Script (3 figures in one file)
+#   Fig2_DBStime.png         纵向评分变化（类似你给的第一幅图）
+#   Fig3_TargetCompare.png   靶点疗效+安全性比较（类似第二幅）
+#   Fig4_SubgroupForest.png  亚组分析森林图（第三幅）
+# =========================================================
+
+# -------- 0. 加载需要的包 --------
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(patchwork)
+  library(forestplot)
+})
+
+# ---------------------------------------------------------
+# 1. 数据预处理（统一因子顺序 & 颜色)
+# ---------------------------------------------------------
+
+# df_long: 每行 = 患者 × 时间点 × 部位的评分
+# 需要至少包含：id, target, time, region, score, improve
+df_long <- df_long %>%
+  mutate(
+    time   = factor(time,
+                    levels = c("Preoperative",
+                               "First follow-up",
+                               "Last follow-up")),
+    region = factor(region,
+                    levels = c("Total",
+                               "Eye",
+                               "Mouth",
+                               "Speech & swallowing",
+                               "Neck")),
+    target = factor(target,
+                    levels = c("GPi-DBS", "STN-DBS"))
+  )
+
+# 颜色设置（你可按需调整）
+cols_time <- c(
+  "Preoperative"    = "#C98B52",  # 棕橘
+  "First follow-up" = "#4C4F9F",  # 紫
+  "Last follow-up"  = "#00A5A5"   # 青绿
+)
+
+cols_target <- c(
+  "GPi-DBS" = "#F4A3B6",  # 粉
+  "STN-DBS" = "#8CC5FF"   # 蓝
+)
+
+cols_adverse <- c(
+  "No"  = "#F4A3B6",
+  "Yes" = "#8CC5FF"
+)
+
+theme_bar <- theme_bw(base_size = 10) +
+  theme(
+    panel.grid      = element_blank(),
+    legend.position = "top",
+    axis.title.x    = element_blank(),
+    axis.text.x     = element_text(angle = 30, hjust = 1, vjust = 1)
+  )
+
+# 从 df_long 中派生一些汇总数据，后面多处会用到 -------
+
+# 总分改善率（只看 Total）
+df_improve <- df_long %>%
+  filter(region == "Total") %>%
+  distinct(id, target, time, improve) %>%
+  mutate(improve = improve * 100)  # 转成百分比
+
+# 总分绝对值
+df_total_score <- df_long %>%
+  filter(region == "Total") %>%
+  group_by(target, time) %>%
+  summarise(
+    mean_score = mean(score, na.rm = TRUE),
+    se_score   = sd(score, na.rm = TRUE) / sqrt(n()),
+    .groups    = "drop"
+  )
+
+# ---------------------------------------------------------
+# 2. 图一：纵向变化 + 改善率（对应你给的第一幅图）
+# ---------------------------------------------------------
+
+# Panel A：GPi-DBS BFMDRS-M 纵向变化
+p1_A <- df_long %>%
+  filter(target == "GPi-DBS") %>%
+  ggplot(aes(x = region, y = score, fill = time)) +
+  stat_summary(fun = mean, geom = "col",
+               position = position_dodge(width = 0.8),
+               width = 0.6) +
+  stat_summary(fun.data = mean_se, geom = "errorbar",
+               position = position_dodge(width = 0.8),
+               width = 0.2) +
+  geom_point(position = position_jitterdodge(
+    jitter.width = 0.15,
+    dodge.width  = 0.8
+  ),
+  size = 1.4, alpha = 0.7) +
+  scale_fill_manual(values = cols_time) +
+  labs(y = "BFMDRS-M Score", title = "A  GPi-DBS") +
+  theme_bar
+
+# Panel B：STN-DBS BFMDRS-M 纵向变化
+p1_B <- df_long %>%
+  filter(target == "STN-DBS") %>%
+  ggplot(aes(x = region, y = score, fill = time)) +
+  stat_summary(fun = mean, geom = "col",
+               position = position_dodge(width = 0.8),
+               width = 0.6) +
+  stat_summary(fun.data = mean_se, geom = "errorbar",
+               position = position_dodge(width = 0.8),
+               width = 0.2) +
+  geom_point(position = position_jitterdodge(
+    jitter.width = 0.15,
+    dodge.width  = 0.8
+  ),
+  size = 1.4, alpha = 0.7) +
+  scale_fill_manual(values = cols_time) +
+  labs(y = "BFMDRS-M Score", title = "B  STN-DBS") +
+  theme_bar +
+  theme(legend.position = "none")
+
+# Panel C：两靶点随时间的改善率
+p1_C <- df_improve %>%
+  group_by(target, time) %>%
+  summarise(
+    mean_imp = mean(improve, na.rm = TRUE),
+    se_imp   = sd(improve, na.rm = TRUE) / sqrt(n()),
+    .groups  = "drop"
+  ) %>%
+  ggplot(aes(x = time, y = mean_imp, fill = target)) +
+  geom_col(position = position_dodge(width = 0.7),
+           width = 0.6) +
+  geom_errorbar(aes(ymin = mean_imp - se_imp,
+                    ymax = mean_imp + se_imp),
+                position = position_dodge(width = 0.7),
+                width = 0.2) +
+  scale_fill_manual(values = cols_target) +
+  scale_y_continuous(limits = c(0, 100),
+                     expand = expansion(mult = c(0, .05))) +
+  labs(
+    x    = NULL,
+    y    = "Improvement (%)",
+    title = "C  Improvement over time"
+  ) +
+  theme_bw(base_size = 10) +
+  theme(
+    panel.grid      = element_blank(),
+    legend.position = "top",
+    axis.text.x     = element_text(angle = 20, hjust = 1)
+  )
+
+fig2 <- p1_A + p1_B + p1_C +
+  plot_layout(widths = c(1.2, 1.2, 1))
+
+ggsave("Fig2_DBStime.png", fig2,
+       width = 12, height = 4, dpi = 600)
+
+# ---------------------------------------------------------
+# 3. 图二：两靶点疗效 & 安全性比较（对应第二幅图）
+# ---------------------------------------------------------
+
+# Panel A：改善率比较（首随 & 末随）
+p2_A <- df_improve %>%
+  group_by(target, time) %>%
+  summarise(
+    mean_imp = mean(improve, na.rm = TRUE),
+    se_imp   = sd(improve, na.rm = TRUE) / sqrt(n()),
+    .groups  = "drop"
+  ) %>%
+  filter(time %in% c("First follow-up", "Last follow-up")) %>%
+  ggplot(aes(x = time, y = mean_imp, fill = target)) +
+  geom_col(position = position_dodge(width = 0.7),
+           width = 0.6) +
+  geom_errorbar(aes(ymin = mean_imp - se_imp,
+                    ymax = mean_imp + se_imp),
+                position = position_dodge(width = 0.7),
+                width = 0.2) +
+  scale_fill_manual(values = cols_target) +
+  scale_y_continuous(limits = c(0, 100),
+                     expand = expansion(mult = c(0, .05))) +
+  labs(
+    x     = NULL,
+    y     = "Improvement (%)",
+    title = "A  Improvement by target"
+  ) +
+  theme_bw(base_size = 10) +
+  theme(
+    panel.grid      = element_blank(),
+    legend.position = "top",
+    axis.text.x     = element_text(angle = 15, hjust = 1)
+  )
+
+# Panel B：BFMDRS-M 总分纵向比较
+p2_B <- df_total_score %>%
+  ggplot(aes(x = time, y = mean_score, fill = target)) +
+  geom_col(position = position_dodge(width = 0.7),
+           width = 0.6) +
+  geom_errorbar(aes(ymin = mean_score - se_score,
+                    ymax = mean_score + se_score),
+                position = position_dodge(width = 0.7),
+                width = 0.2) +
+  scale_fill_manual(values = cols_target) +
+  labs(
+    x     = NULL,
+    y     = "BFMDRS-M Score",
+    title = "B  BFMDRS-M over time"
+  ) +
+  theme_bw(base_size = 10) +
+  theme(
+    panel.grid      = element_blank(),
+    legend.position = "none",
+    axis.text.x     = element_text(angle = 20, hjust = 1)
+  )
+
+# Panel C：严重不良事件堆叠柱状图
+adverse_df <- adverse_df %>%
+  mutate(
+    target  = factor(target, levels = c("GPi-DBS", "STN-DBS")),
+    serious = factor(serious, levels = c("No", "Yes"))
+  )
+
+adverse_sum <- adverse_df %>%
+  count(target, serious) %>%
+  group_by(target) %>%
+  mutate(
+    prop  = n / sum(n),
+    label = scales::percent(prop, accuracy = 0.1)
+  )
+
+p2_C <- adverse_sum %>%
+  ggplot(aes(x = target, y = prop, fill = serious)) +
+  geom_col(width = 0.5) +
+  geom_text(aes(label = label),
+            position = position_stack(vjust = 0.5),
+            size = 3) +
+  scale_fill_manual(values = cols_adverse, name = "Adverse") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    x     = NULL,
+    y     = NULL,
+    title = "C  Serious adverse events"
+  ) +
+  theme_bw(base_size = 10) +
+  theme(
+    panel.grid      = element_blank(),
+    legend.position = "right"
+  )
+
+fig3 <- p2_A + p2_B + p2_C +
+  plot_layout(widths = c(1.1, 1.1, 1))
+
+ggsave("Fig3_TargetCompare.png", fig3,
+       width = 12, height = 4, dpi = 600)
+
+# ---------------------------------------------------------
+# 4. 图三：亚组分析森林图（对应第三幅图）
+# ---------------------------------------------------------
+
+# subgroup_df: 需要包含下列列名
+#   subgroup, n_label, gpi_mean_sd, stn_mean_sd,
+#   beta, lower, upper, p, p_interaction
+
+subgroup_df <- subgroup_df %>%
+  mutate(subgroup = as.character(subgroup))
+
+# 构造左侧表格文本（每一列是一个变量）
+tabletext <- cbind(
+  c("Subgroup", subgroup_df$subgroup),
+  c("n (%)",    subgroup_df$n_label),
+  c("GPi-DBS\nMean ± SD", subgroup_df$gpi_mean_sd),
+  c("STN-DBS\nMean ± SD", subgroup_df$stn_mean_sd),
+  c("β (95% CI)", sprintf("%.2f (%.2f, %.2f)",
+                          subgroup_df$beta,
+                          subgroup_df$lower,
+                          subgroup_df$upper)),
+  c("P",                sprintf("%.3f", subgroup_df$p)),
+  c("P for\ninteraction",
+    sprintf("%.3f", subgroup_df$p_interaction))
+)
+
+# β 和 CI（第一行 NA 对应表头）
+mean_vals  <- c(NA, subgroup_df$beta)
+lower_vals <- c(NA, subgroup_df$lower)
+upper_vals <- c(NA, subgroup_df$upper)
+
+png("Fig4_SubgroupForest.png",
+    width = 2200, height = 2600, res = 300)
+
+forestplot(
+  labeltext = tabletext,
+  mean  = mean_vals,
+  lower = lower_vals,
+  upper = upper_vals,
+  zero  = 0,
+  boxsize = 0.15,
+  line.margin = 0.1,
+  xlab  = "Difference in improvement (STN - GPi)",
+  xlog  = FALSE,
+  col = fpColors(box    = "black",
+                 line   = "black",
+                 summary = "black"),
+  lwd.zero     = 1,
+  lwd.ci       = 1,
+  ci.vertices  = TRUE,
+  txt_gp = fpTxtGp(
+    label = grid::gpar(cex = 0.7),
+    ticks = grid::gpar(cex = 0.7),
+    xlab  = grid::gpar(cex = 0.8),
+    title = grid::gpar(cex = 0.9, fontface = "bold")
+  )
+)
+
+dev.off()
+
+# ================== 结束 ==================
+
